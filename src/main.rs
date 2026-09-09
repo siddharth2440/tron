@@ -1,0 +1,21 @@
+use winit::event_loop::{ControlFlow, EventLoop};
+use crate::app::App;
+
+mod app;
+mod state;
+
+fn main() {
+    env_logger::init();
+
+    let event_loop = EventLoop::new().expect("Eventloop New error");
+
+    event_loop.set_control_flow(ControlFlow::Poll);
+
+    let mut app = App::default();
+
+    if let Err( event_loop_app_run_err ) = event_loop.run_app(&mut app) {
+        println!("Error: EventLoop run error: {event_loop_app_run_err}");
+        std::process::exit(1);
+    }
+
+}
