@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
 use winit::{application::ApplicationHandler, event::WindowEvent, window::Window};
+
 use crate::state::State;
 
 #[derive(Debug, Default)]
 pub struct App {
-    state: Option<State>
+    state: Option<State>,
 }
 
 impl ApplicationHandler for App {
@@ -32,6 +33,7 @@ impl ApplicationHandler for App {
             },
             WindowEvent::KeyboardInput { device_id, event, is_synthetic } => {
                 println!("Keyboard Input {device_id:?} {event:?} {is_synthetic}");
+
             },
             WindowEvent::MouseInput { device_id, state, button } => {
                 println!("Mouse Input {device_id:?} {event:?} {button:?}");
@@ -46,7 +48,13 @@ impl ApplicationHandler for App {
                 println!("Window is Occluded:{is_occluded}");
             },
             WindowEvent::RedrawRequested => {
-                println!("Redraw Requested");
+
+                let state = match &mut self.state {
+                    Some(state) => state,
+                    None => return,
+                };
+
+                state.render();
             },
             _ => {
                 println!("Unhandled Window Event.");
@@ -60,14 +68,24 @@ impl ApplicationHandler for App {
 
 
     fn memory_warning(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        // This is a notification that the operating system is warning our application about memory pressure.   
+        // This is a notification that the operating system is warning our application about memory pressure.
+
+        println!("Warning: Memory Causing....");
     }
 
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         // Create a window and initialize the things.
-        let window = Arc::new(
-            event_loop.create_window( Window::default_attributes()).expect("Unable to create new window")
+        let mut window = Arc::new(
+            event_loop
+            .create_window( Window::default_attributes())
+            .expect("Unable to create new window")
         );
+
+        let state = pollster::block_on( State::new(
+            event_loop.owned_display_handle(), window.clone()
+        )).expect("Unable to initialize new State");
+
+        self.state = Some(state);
     }
 
 
@@ -89,6 +107,9 @@ impl ApplicationHandler for App {
 
     fn exiting(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         // when the event loop is about to exit.
+
+        println!("Exiting....");
+
     }
 
     fn new_events(&mut self, event_loop: &winit::event_loop::ActiveEventLoop, cause: winit::event::StartCause) {
@@ -97,6 +118,9 @@ impl ApplicationHandler for App {
 
     fn suspended(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         // indicates that the application has been suspended        
+
+        println!("Application is suspended.");
+
     }
 
 }

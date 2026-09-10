@@ -4,14 +4,17 @@ use winit::{event_loop::OwnedDisplayHandle, window::Window};
 
 #[derive(Debug)]
 pub struct State {
+
+    window: Arc<Window>,
+
     instance: wgpu::Instance,
 
     device: wgpu::Device,
     queue: wgpu::Queue,
 
     config: wgpu::wgt::SurfaceConfiguration<Vec<wgpu::TextureFormat>>,
+    
     surface: Surface<'static>,
-
     texture_format: wgpu::TextureFormat,
 
     render_pipeline: wgpu::RenderPipeline,
@@ -22,10 +25,10 @@ pub struct State {
 
 impl State {
 
-    async fn new( display: OwnedDisplayHandle, window: Arc<Window> ) -> Result<State, ()> {
+    pub async fn new( display: OwnedDisplayHandle, window: Arc<Window> ) -> Result<State, ()> {
 
         let instance_descriptor: wgpu::InstanceDescriptor = wgpu::InstanceDescriptor { 
-            backends: wgpu::Backends::GL, 
+            backends: wgpu::Backends::all(), 
             flags: wgpu::InstanceFlags::default(), 
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds { 
                 for_resource_creation: Some(90),
@@ -63,18 +66,27 @@ impl State {
             eprintln!("Error: create surface: {err}");
         })?;
 
+        println!("Surface created. {surface:?}");
+
         
         let adapter = instance.request_adapter(&wgpu::RequestAdapterOptionsBase { 
-            power_preference: wgpu::PowerPreference::LowPower, 
-            force_fallback_adapter: true, 
+            power_preference: wgpu::PowerPreference::default(), 
+            force_fallback_adapter: false, 
             compatible_surface: Some(&surface), 
-            apply_limit_buckets: true 
+            apply_limit_buckets: false 
         }).await.map_err( |err| {
             eprintln!("Error: Request adaptor Error: {err}");
         })?;
         
         let ( device, queue) = match adapter.request_device(&wgpu::DeviceDescriptor {
-            ..Default::default()
+            experimental_features: wgpu::ExperimentalFeatures::disabled(),
+            label: Some("Request Device"),
+            memory_hints: wgpu::MemoryHints::MemoryUsage,
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits {
+                ..Default::default()
+            },
+            trace: wgpu::Trace::default(),
         }).await {
             Ok((d, q)) => (d, q),
             Err( err ) => {
@@ -82,6 +94,9 @@ impl State {
                 return Err(());
             }
         };
+
+        println!("Device Created: {device:?}");
+        println!("Got Queue: {queue:?}");
         
         let surface_cap = surface.get_capabilities(&adapter);
         println!("INFO: SurfaceCapabilities {surface_cap:?}");
@@ -119,12 +134,12 @@ impl State {
 
         let pipeline_layout = device.create_pipeline_layout(&pipeline_layout_desc);
 
-        let render_pipeline_desc: wgpu::RenderPipelineDescriptor = wgpu::RenderPipelineDescriptor { 
+        let render_pipeline_desc: wgpu::RenderPipelineDescriptor = wgpu::RenderPipelineDescriptor {
             label: Some("Render Pipeline Descriptor"), 
             layout: Some(&pipeline_layout), 
             vertex: wgpu::VertexState { 
                 module: &shader, 
-                entry_point: Some("vs_main"), 
+                entry_point: None, 
                 compilation_options: wgpu::PipelineCompilationOptions {
                     ..Default::default() 
                 },
@@ -132,44 +147,55 @@ impl State {
             }, 
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
-                conservative: true,
+                conservative: false,
                 cull_mode: Some(wgpu::Face::Back),
                 front_face: wgpu::FrontFace::Ccw,
-                polygon_mode: wgpu::PolygonMode::Line,
-                strip_index_format: Some(wgpu::IndexFormat::Uint32),
-                unclipped_depth: true
+                polygon_mode: wgpu::PolygonMode::Fill,
+                strip_index_format: None,
+                unclipped_depth: false
             },
-            depth_stencil: Some(wgpu::DepthStencilState { 
-                format: wgpu::TextureFormat::Depth32Float, 
-                depth_write_enabled: Some(true), 
-                depth_compare: Some(wgpu::CompareFunction::default()),
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(), 
-            }), 
+            depth_stencil: None, 
             multisample: wgpu::MultisampleState {
                 ..Default::default()
             },
-            fragment: None, 
+            fragment: Some(wgpu::FragmentState { 
+                module: &shader, 
+                entry_point: Some("fs_main"), 
+                compilation_options: wgpu::PipelineCompilationOptions { 
+                    ..Default::default() 
+                },
+                targets: &[
+                    Some(wgpu::ColorTargetState { 
+                        format: surface_configuration.format, 
+                        blend: Some(wgpu::BlendState::REPLACE), 
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })
+                ],
+            }),
             multiview_mask: None, 
             cache: None
         };
         let render_pipeline = device.create_render_pipeline(&render_pipeline_desc);
 
-        return Ok(
-            State { 
-                instance,
-                device, queue,
-                surface: surface,
-                texture_format: texture_format,
-                win_height: physical_size.height as u32, 
-                win_width: physical_size.width as u32, 
-                render_pipeline,
-                config: surface_configuration,
-            }
-        );
+        
+        let mut state =  State { 
+            window,
+            instance,
+            device, queue,
+            surface: surface,
+            texture_format: texture_format,
+            win_height: physical_size.height as u32, 
+            win_width: physical_size.width as u32, 
+            render_pipeline,
+            config: surface_configuration,
+        };
+
+        state.reconfigure_state();
+
+        return Ok(state);
     }
 
-    fn reconfigure_state( &mut self ) {
+    pub fn reconfigure_state( &mut self ) {
         let surface_configuration: wgpu::SurfaceConfiguration = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: self.texture_format,
@@ -187,7 +213,69 @@ impl State {
         self.surface.configure(&self.device, &self.config);
     }
 
-    fn render(&self) {
+    pub fn render(&mut self) {
+        self.window.request_redraw();
+
+        let surface_texture = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Lost => {
+                self.surface = self.instance.create_surface(self.window.clone()).unwrap();
+                self.reconfigure_state();
+                return;
+            },
+            wgpu::CurrentSurfaceTexture::Success( surface_tex ) => surface_tex,
+            wgpu::CurrentSurfaceTexture::Occluded | wgpu::CurrentSurfaceTexture::Timeout => {
+                return;
+            },
+            wgpu::CurrentSurfaceTexture::Validation => {
+                unreachable!("Error: validation error should be panic.");
+            },
+            wgpu::CurrentSurfaceTexture::Suboptimal(texture) => {
+                drop(texture);
+                self.reconfigure_state();
+                return;
+            },
+            wgpu::CurrentSurfaceTexture::Outdated => {
+                self.reconfigure_state();
+                return;
+            }
+        };
+
+        let texture_view = surface_texture.texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("texture view descriptor"),
+            format: Some(self.texture_format.add_srgb_suffix()),
+            ..Default::default()
+        });
+
+        let mut encoder: wgpu::CommandEncoder = self.device.create_command_encoder(&wgpu::wgt::CommandEncoderDescriptor {
+            label: Some("Encoder") 
+        });
+
+        let mut renderpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor { 
+            label: Some("Render Pass"), 
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment { 
+                view: &texture_view, 
+                depth_slice: None, 
+                resolve_target: None, 
+                ops: wgpu::Operations { 
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLUE), 
+                    store: wgpu::StoreOp::Store,
+                },
+            })], 
+            depth_stencil_attachment: None,
+            timestamp_writes: None, 
+            occlusion_query_set: None, 
+            multiview_mask: None
+        });
+
+        renderpass.set_pipeline(&self.render_pipeline);
+        renderpass.draw(0..3, 0..1);
+
+        drop(renderpass);
+
+        self.queue.submit([encoder.finish()]);
+        self.window.pre_present_notify();
+        self.queue.present(surface_texture);
+
     }
 
 }
