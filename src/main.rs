@@ -1,5 +1,5 @@
-use winit::event_loop::{ControlFlow, EventLoop};
 use crate::app::App;
+use winit::event_loop::{ControlFlow, EventLoop};
 
 mod app;
 mod state;
@@ -13,9 +13,8 @@ fn main() {
 
     let mut app = App::default();
 
-    if let Err( event_loop_app_run_err ) = event_loop.run_app(&mut app) {
+    if let Err(event_loop_app_run_err) = event_loop.run_app(&mut app) {
         println!("Error: EventLoop run error: {event_loop_app_run_err}");
         std::process::exit(1);
     }
-
 }

@@ -1,6 +1,5 @@
 use std::sync::Arc;
-
-use winit::{application::ApplicationHandler, event::WindowEvent, window::Window};
+use winit::{application::ApplicationHandler, event::WindowEvent, keyboard::{KeyCode, PhysicalKey}, window::Window};
 
 use crate::state::State;
 
@@ -14,7 +13,7 @@ impl ApplicationHandler for App {
     fn window_event(
         &mut self,
         event_loop: &winit::event_loop::ActiveEventLoop,
-        window_id: winit::window::WindowId,
+        _window_id: winit::window::WindowId,
         event: winit::event::WindowEvent,
     ) {
 
@@ -31,12 +30,19 @@ impl ApplicationHandler for App {
             WindowEvent::CursorEntered { device_id } => {
                 println!("Cursor Entered device_id: {device_id:?}");
             },
-            WindowEvent::KeyboardInput { device_id, event, is_synthetic } => {
-                println!("Keyboard Input {device_id:?} {event:?} {is_synthetic}");
-
+            WindowEvent::KeyboardInput { event, .. } => {
+                
+                let is_key_pressed = event.state == winit::event::ElementState::Pressed;
+                
+                if let PhysicalKey::Code(keycode) = event.physical_key {
+                    match (keycode, is_key_pressed) {
+                        ( KeyCode::Escape, true ) => event_loop.exit(),
+                        _ => (),
+                    }
+                }
             },
             WindowEvent::MouseInput { device_id, state, button } => {
-                println!("Mouse Input {device_id:?} {event:?} {button:?}");
+                println!("Mouse Input {device_id:?} {state:?} {button:?}");
             },
             WindowEvent::Resized(physical_size) => {
                 println!("Window Resized: {physical_size:?}");
@@ -62,20 +68,21 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn user_event(&mut self, event_loop: &winit::event_loop::ActiveEventLoop, event: ()) {
+    fn user_event(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop, _event: ()) {
         // A UserEvent is an event that our application sends to itself through the event loop.
     }
 
 
-    fn memory_warning(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+    fn memory_warning(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
         // This is a notification that the operating system is warning our application about memory pressure.
+        println!("Warning: Memory Pressure Detected...");
 
-        println!("Warning: Memory Causing....");
+
     }
 
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         // Create a window and initialize the things.
-        let mut window = Arc::new(
+        let window = Arc::new(
             event_loop
             .create_window( Window::default_attributes())
             .expect("Unable to create new window")
@@ -89,15 +96,15 @@ impl ApplicationHandler for App {
     }
 
 
-    fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+    fn about_to_wait(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
         // called when winit is about to go back to waiting for events.
     }
 
     fn device_event(
         &mut self,
-        event_loop: &winit::event_loop::ActiveEventLoop,
-        device_id: winit::event::DeviceId,
-        event: winit::event::DeviceEvent,
+        _event_loop: &winit::event_loop::ActiveEventLoop,
+        _device_id: winit::event::DeviceId,
+        _event: winit::event::DeviceEvent,
     ) {
         // This one is particularly interesting for games and graphics engines.
         
@@ -107,18 +114,15 @@ impl ApplicationHandler for App {
 
     fn exiting(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         // when the event loop is about to exit.
-
-        println!("Exiting....");
-
+        println!("INFO: Exiting.... {}", event_loop.exiting());
     }
 
-    fn new_events(&mut self, event_loop: &winit::event_loop::ActiveEventLoop, cause: winit::event::StartCause) {
+    fn new_events(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop, _cause: winit::event::StartCause) {
         
     }
 
-    fn suspended(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+    fn suspended(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
         // indicates that the application has been suspended        
-
         println!("Application is suspended.");
 
     }
