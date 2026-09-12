@@ -1,13 +1,23 @@
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
-    @location(0) color: vec3<f32>,
+    @location(0) tex_coords: vec2<f32>,
 };
 
 
 struct VertexInput {
-    @location(0) position: vec2<f32>,
-    @location(1) color: vec3<f32>
+    @location(0) position: vec3<f32>,
+    @location(1) tex_coords: vec2<f32>
 };
+
+@group(0) @binding(0)
+var my_texture: texture_2d<f32>;
+
+@group(0) @binding(1)
+var my_sampler: sampler;
+
+
+@group(1) @binding(0)
+var<uniform> model_matrix: mat4x4<f32>;
 
 @vertex
 fn vs_main(
@@ -15,13 +25,13 @@ fn vs_main(
 ) -> VertexOutput {
     var output: VertexOutput;
     
-    output.clip_position = vec4<f32>( input.position, 0.0, 1.0 );
-    output.color = input.color;
+    output.clip_position = model_matrix * vec4<f32>( input.position, 1.0 );
+    output.tex_coords = input.tex_coords;
     return output;
 
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(in.color, 1.0);
+    return textureSample( my_texture, my_sampler, in.tex_coords );
 }

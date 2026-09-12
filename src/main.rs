@@ -3,6 +3,8 @@ use winit::event_loop::{ControlFlow, EventLoop};
 
 mod app;
 mod state;
+mod texture;
+mod coords;
 
 fn main() {
     env_logger::init();

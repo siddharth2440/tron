@@ -1,6 +1,9 @@
 use std::sync::Arc;
+use cgmath::{Matrix4, Vector3};
 use wgpu::{util::DeviceExt, Surface};
 use winit::{event_loop::OwnedDisplayHandle, window::Window};
+
+use crate::{coords::{VERTICES, CUBE_VERTICES}, texture};
 
 #[derive(Debug)]
 pub struct State {
@@ -22,13 +25,26 @@ pub struct State {
 
     win_height: u32,
     win_width: u32,
+
+    model_uniform_buffer: wgpu::Buffer,
+    
+    texture_bindgroup: wgpu::BindGroup,
+    model_matrix_bindgroup: wgpu::BindGroup,
+
+    rotation: f32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct ModelUniform {
+    pub model_mat: [[f32; 4]; 4]
 }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
-    pub vertex: [f32; 2],
-    pub color: [f32; 3],
+    pub vertex: [f32; 3],
+    pub texture_coords: [f32; 2],
 }
 
 
@@ -40,15 +56,19 @@ impl Vertex {
             array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress, 
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &[
+                
+                // `position`
                 wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x2,
+                    format: wgpu::VertexFormat::Float32x3,
                     shader_location: 0,
                     offset: 0,
                 },
+
+                // `texture`
                 wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
+                    format: wgpu::VertexFormat::Float32x2,
                     shader_location: 1,
-                    offset: std::mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
+                    offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
                 }
             ]
         }
@@ -92,8 +112,8 @@ impl State {
             display: Some(Box::new(display)),
         };
 
-        let instance = wgpu::Instance::new(instance_descriptor);
-        let surface = instance.create_surface(window.clone()).map_err(|err| {
+        let instance: wgpu::Instance = wgpu::Instance::new(instance_descriptor);
+        let surface: Surface<'_> = instance.create_surface(window.clone()).map_err(|err| {
             eprintln!("Error: create surface: {err}");
         })?;
 
@@ -146,25 +166,95 @@ impl State {
 
         let physical_size = window.inner_size();
 
-        const VERTICES: &[Vertex] = &[
-            Vertex {
-                vertex: [-0.5, -0.5],
-                color: [1.0, 0.0, 0.0],
-            },
-            Vertex {
-                vertex: [0.5, -0.5],
-                color: [0.0, 1.0, 0.0],
-            },
-            Vertex {
-                vertex: [0.5, 0.5],
-                color: [0.0, 0.0, 1.0],
-            },
-        ];
+        let image_data_in_bytes = include_bytes!("../assets/a1.jpg");
+        let texture = texture::Texture::from_bytes(&device, &queue, image_data_in_bytes).expect("texture creatiion error");
+
+        let texture_bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { 
+            label: Some("Texture Bind Group Layout"), 
+            entries: &[
+                
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    count: None,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture { 
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true }, 
+                        view_dimension: wgpu::TextureViewDimension::D2, 
+                        multisampled: false, 
+                    },
+                },
+
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    count: None,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                },
+
+            ]
+        });
+
+        let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor { 
+            label: Some("Texture Bind Group."), 
+            layout: &texture_bind_group_layout, 
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&texture.texture_view)
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&texture.sampler)
+                }
+            ]
+        });
+
+        let model_matrix = Matrix4::from_translation(Vector3::new(0.3, 0.0, 0.0));
+
+        let model_uniform = ModelUniform {
+            model_mat: model_matrix.into(),
+        };
+
+        let model_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
+            label: Some("model uniform buffer"),
+            contents: bytemuck::cast_slice(&[model_uniform]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST
+        });
+
+        // Group 1
+        // Binding 0 -> Model Matrix
+
+        let model_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { 
+            label: Some("Model Bind Group Layout"), 
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    count: None,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer { 
+                        ty: wgpu::BufferBindingType::Uniform, 
+                        has_dynamic_offset: false, 
+                        min_binding_size: None 
+                    },
+                }
+            ]
+        });
+
+        let model_bindgroup = device.create_bind_group(&wgpu::BindGroupDescriptor { 
+            label: Some("model bind group"), 
+            layout: &model_bind_group_layout, 
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: model_uniform_buffer.as_entire_binding()
+                }
+            ] 
+        });
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer Init Descriptor"),
             usage: wgpu::BufferUsages::VERTEX,
-            contents: bytemuck::cast_slice(VERTICES),
+            contents: bytemuck::cast_slice(CUBE_VERTICES),
         });
 
         let surface_configuration: wgpu::SurfaceConfiguration = wgpu::SurfaceConfiguration {
@@ -187,8 +277,11 @@ impl State {
 
         let pipeline_layout_desc: wgpu::PipelineLayoutDescriptor = wgpu::PipelineLayoutDescriptor {
             label: Some("Pipeline Layout Descriptor"),
-            bind_group_layouts: &[],
             immediate_size: 0,
+            bind_group_layouts: &[
+                Some(&texture_bind_group_layout),   // @group(0)
+                Some(&model_bind_group_layout),     // @group(1)
+            ],
         };
 
         let pipeline_layout = device.create_pipeline_layout(&pipeline_layout_desc);
@@ -209,8 +302,8 @@ impl State {
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 conservative: false,
-                cull_mode: Some(wgpu::Face::Back),
-                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                front_face: wgpu::FrontFace::Cw,
                 polygon_mode: wgpu::PolygonMode::Fill,
                 strip_index_format: None,
                 unclipped_depth: false,
@@ -245,10 +338,16 @@ impl State {
             texture_format: texture_format,
             vertex_buffer,
 
+            model_uniform_buffer,
+
             win_height: physical_size.height as u32,
             win_width: physical_size.width as u32,
             render_pipeline,
             config: surface_configuration,
+            texture_bindgroup: texture_bind_group,
+            model_matrix_bindgroup: model_bindgroup,
+
+            rotation: 0.0
         };
 
         state.reconfigure_state();
@@ -274,7 +373,21 @@ impl State {
         self.surface.configure(&self.device, &self.config);
     }
 
+    fn update_model_matrix(&mut self) {
+
+        self.rotation += 0.01;
+
+        let rotation_matrix = Matrix4::from_angle_y(cgmath::Rad(self.rotation));
+        let model_uniform: ModelUniform = ModelUniform { model_mat: rotation_matrix.into() };
+
+        self.queue.write_buffer(&self.model_uniform_buffer, 0, bytemuck::cast_slice(&[model_uniform]));
+
+    }
+
     pub fn render(&mut self) {
+        self.update_model_matrix();
+
+
         self.window.request_redraw();
 
         let surface_texture = match self.surface.get_current_texture() {
@@ -333,10 +446,14 @@ impl State {
         });
 
         renderpass.set_pipeline(&self.render_pipeline);
+        
+        renderpass.set_bind_group(0, &self.texture_bindgroup, &[]);
+        renderpass.set_bind_group(1, &self.model_matrix_bindgroup, &[]);
+
         renderpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
 
         
-        renderpass.draw(0..3, 0..1);
+        renderpass.draw(0..36, 0..1);
 
         drop(renderpass);
 
