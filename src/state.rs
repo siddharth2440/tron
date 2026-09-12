@@ -1,9 +1,9 @@
 use std::sync::Arc;
-use cgmath::{Matrix4, Vector3};
+use cgmath::{Matrix4, Point3, Vector3};
 use wgpu::{util::DeviceExt, Surface};
 use winit::{event_loop::OwnedDisplayHandle, window::Window};
 
-use crate::{coords::{VERTICES, CUBE_VERTICES}, texture};
+use crate::{coords::CUBE_VERTICES, texture};
 
 #[derive(Debug)]
 pub struct State {
@@ -17,7 +17,9 @@ pub struct State {
     config: wgpu::wgt::SurfaceConfiguration<Vec<wgpu::TextureFormat>>,
 
     surface: Surface<'static>,
+    
     texture_format: wgpu::TextureFormat,
+    depth_texture: texture::Texture,
 
     vertex_buffer: wgpu::Buffer,
 
@@ -31,13 +33,21 @@ pub struct State {
     texture_bindgroup: wgpu::BindGroup,
     model_matrix_bindgroup: wgpu::BindGroup,
 
-    rotation: f32,
+    rotation_x: f32,
+    rotation_y: f32,
+    rotation_z: f32,
+
+    rotation_speed_x: f32,
+    rotation_speed_y: f32,
+    rotation_speed_z: f32,
 }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ModelUniform {
-    pub model_mat: [[f32; 4]; 4]
+    pub model_mat: [[f32; 4]; 4],
+    pub view_matrix: [[f32; 4]; 4],
+    pub projection_matrix: [[f32; 4]; 4]
 }
 
 #[repr(C)]
@@ -166,7 +176,7 @@ impl State {
 
         let physical_size = window.inner_size();
 
-        let image_data_in_bytes = include_bytes!("../assets/a1.jpg");
+        let image_data_in_bytes = include_bytes!("../assets/a2.jpg");
         let texture = texture::Texture::from_bytes(&device, &queue, image_data_in_bytes).expect("texture creatiion error");
 
         let texture_bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { 
@@ -210,9 +220,16 @@ impl State {
         });
 
         let model_matrix = Matrix4::from_translation(Vector3::new(0.3, 0.0, 0.0));
+        let view = Matrix4::look_at_rh(Point3::new(0.0, 0.0, 3.0), Point3::new(0.0, 0.0, 0.0), Vector3::unit_y());
+
+        let aspect = physical_size.width as f32 / physical_size.height as f32;
+
+        let projection = cgmath::perspective(cgmath::Deg(45.0), aspect, 0.1, 100.0);
 
         let model_uniform = ModelUniform {
             model_mat: model_matrix.into(),
+            projection_matrix: projection.into(),
+            view_matrix: view.into(),
         };
 
         let model_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
@@ -270,6 +287,8 @@ impl State {
             view_formats: vec![],
         };
 
+        let depth_texture = texture::Texture::create_depth_buffer(&surface_configuration, &device);
+
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
@@ -308,7 +327,17 @@ impl State {
                 strip_index_format: None,
                 unclipped_depth: false,
             },
-            depth_stencil: None,
+            depth_stencil: Some(wgpu::DepthStencilState { 
+                format: texture::Texture::DEPTH_FORMAT, 
+                depth_write_enabled: Some(true), 
+                depth_compare: Some(wgpu::CompareFunction::Less), 
+                stencil: wgpu::StencilState{
+                    ..Default::default()
+                }, 
+                bias: wgpu::DepthBiasState { 
+                    ..Default::default()
+                }
+            }),
             multisample: wgpu::MultisampleState {
                 ..Default::default()
             },
@@ -327,7 +356,11 @@ impl State {
             multiview_mask: None,
             cache: None,
         };
-        let render_pipeline = device.create_render_pipeline(&render_pipeline_desc);
+        let render_pipeline: wgpu::RenderPipeline = device.create_render_pipeline(&render_pipeline_desc);
+
+        let rotation_speed_x = rand::random_range(0.005..0.02);
+        let rotation_speed_y = rand::random_range(0.005..0.02);
+        let rotation_speed_z = rand::random_range(0.005..0.02);
 
         let mut state = State {
             window,
@@ -336,6 +369,8 @@ impl State {
             queue,
             surface: surface,
             texture_format: texture_format,
+            depth_texture,
+
             vertex_buffer,
 
             model_uniform_buffer,
@@ -347,7 +382,14 @@ impl State {
             texture_bindgroup: texture_bind_group,
             model_matrix_bindgroup: model_bindgroup,
 
-            rotation: 0.0
+            rotation_x: 0.0,
+            rotation_y: 0.0,
+            rotation_z: 0.0,
+
+            rotation_speed_x,
+            rotation_speed_y,
+            rotation_speed_z,
+
         };
 
         state.reconfigure_state();
@@ -371,21 +413,37 @@ impl State {
 
         self.config = surface_configuration;
         self.surface.configure(&self.device, &self.config);
+        self.depth_texture = texture::Texture::create_depth_buffer(&self.config, &self.device);
     }
 
-    fn update_model_matrix(&mut self) {
+    fn update_uniforms(&mut self) {
 
-        self.rotation += 0.01;
+        self.rotation_x += self.rotation_speed_x;
+        self.rotation_y += self.rotation_speed_y;
+        self.rotation_z += self.rotation_speed_z;
 
-        let rotation_matrix = Matrix4::from_angle_y(cgmath::Rad(self.rotation));
-        let model_uniform: ModelUniform = ModelUniform { model_mat: rotation_matrix.into() };
+        let rotation_x = Matrix4::from_angle_x(cgmath::Rad(self.rotation_x));
+        let rotation_y = Matrix4::from_angle_y(cgmath::Rad(self.rotation_y));
+        let rotation_z = Matrix4::from_angle_z(cgmath::Rad(self.rotation_z));
 
-        self.queue.write_buffer(&self.model_uniform_buffer, 0, bytemuck::cast_slice(&[model_uniform]));
+        let model = rotation_x * rotation_y * rotation_z;
+        let view = Matrix4::look_at_rh(Point3::new(0.0, 0.0, 3.0), Point3::new(0.0, 0.0, 0.0), Vector3::unit_y());
+        
+        let aspect = self.win_width as f32 / self.win_height as f32;
+        let projection = cgmath::perspective(cgmath::Deg(45.0), aspect, 0.1, 100.0);
+
+        let uniforms: ModelUniform = ModelUniform { 
+                        model_mat: model.into(), 
+                        view_matrix: view.into(), 
+                        projection_matrix: projection.into()
+                    };
+
+        self.queue.write_buffer(&self.model_uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
 
     }
 
     pub fn render(&mut self) {
-        self.update_model_matrix();
+        self.update_uniforms();
 
 
         self.window.request_redraw();
@@ -439,7 +497,14 @@ impl State {
                     store: wgpu::StoreOp::Store,
                 },
             })],
-            depth_stencil_attachment: None,
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { 
+                view: &self.depth_texture.texture_view, 
+                depth_ops: Some(wgpu::Operations { 
+                    load: wgpu::LoadOp::Clear(1.0), 
+                    store: wgpu::StoreOp::Store
+                }), 
+                stencil_ops: None,
+            }),
             timestamp_writes: None,
             occlusion_query_set: None,
             multiview_mask: None,

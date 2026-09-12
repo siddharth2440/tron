@@ -1,5 +1,7 @@
 use image::GenericImageView;
 
+
+#[derive(Debug)]
 pub struct Texture {
     pub texture: wgpu::Texture,
     pub texture_view: wgpu::TextureView,
@@ -69,6 +71,55 @@ impl Texture {
             mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
+
+        Self { texture, texture_view, sampler }
+
+    }
+
+    pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
+    pub fn create_depth_buffer(surface_config: &wgpu::SurfaceConfiguration , device: &wgpu::Device) -> Self {
+
+        let size: wgpu::Extent3d = wgpu::Extent3d { 
+            width: surface_config.width,  
+            height: surface_config.height, 
+            depth_or_array_layers: 1 
+        };
+
+        let texture_desc = wgpu::TextureDescriptor{
+            label: Some(" Texture Descriptor "),
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            dimension: wgpu::TextureDimension::D2,
+            format: Self::DEPTH_FORMAT,
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            view_formats: &[],
+        };
+
+        let texture = device.create_texture(&texture_desc);
+
+
+        let texture_view_desc: wgpu::TextureViewDescriptor = wgpu::wgt::TextureViewDescriptor { 
+            label: Some("Texture View Descriptor"), 
+            ..Default::default()
+        };
+        let texture_view = texture.create_view(&texture_view_desc);
+
+        let sampler_desc: wgpu::SamplerDescriptor = wgpu::wgt::SamplerDescriptor { 
+            label: Some("Sampler Descriptor"), 
+            address_mode_u: wgpu::AddressMode::ClampToEdge, 
+            address_mode_v: wgpu::AddressMode::ClampToEdge, 
+            address_mode_w: wgpu::AddressMode::ClampToEdge, 
+            mag_filter: wgpu::FilterMode::Linear, 
+            min_filter: wgpu::FilterMode::Linear, 
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest, 
+            lod_min_clamp: 0.0, 
+            lod_max_clamp: 100.0, 
+            compare: Some(wgpu::CompareFunction::Less), 
+            ..Default::default()
+        };
+        let sampler = device.create_sampler(&sampler_desc);
 
         Self { texture, texture_view, sampler }
 

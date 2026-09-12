@@ -16,8 +16,16 @@ var my_texture: texture_2d<f32>;
 var my_sampler: sampler;
 
 
+struct Uniforms {
+    model: mat4x4<f32>,
+    view: mat4x4<f32>,
+    projection: mat4x4<f32>
+}
+
 @group(1) @binding(0)
-var<uniform> model_matrix: mat4x4<f32>;
+var<uniform> uniforms: Uniforms;
+
+
 
 @vertex
 fn vs_main(
@@ -25,7 +33,7 @@ fn vs_main(
 ) -> VertexOutput {
     var output: VertexOutput;
     
-    output.clip_position = model_matrix * vec4<f32>( input.position, 1.0 );
+    output.clip_position = uniforms.projection * uniforms.view * uniforms.model * vec4<f32>( input.position, 1.0 );
     output.tex_coords = input.tex_coords;
     return output;
 
