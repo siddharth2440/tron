@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use cgmath::{Matrix4, Point3, Vector3};
+use cgmath::{InnerSpace, Matrix4, Point3, Vector3};
 use wgpu::{util::DeviceExt, Surface};
 use winit::{event_loop::OwnedDisplayHandle, window::Window};
 
@@ -190,9 +190,6 @@ impl State {
             ]
         });
 
-        // Group 1
-        // Binding 0 -> Model Matrix
-
         let model_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { 
             label: Some("Model Bind Group Layout"), 
             entries: &[
@@ -299,31 +296,46 @@ impl State {
         };
         let render_pipeline: wgpu::RenderPipeline = device.create_render_pipeline(&render_pipeline_desc);
 
-        let cube_positions: &[Vector3<f32>] = &[
-            Vector3::new( 0.0,  0.0,   0.0),
-            Vector3::new( 2.0,  5.0, -15.0),
-            Vector3::new(-1.5, -2.2,  -2.5),
-            Vector3::new(-3.8, -2.0, -12.3),
-            Vector3::new( 2.4, -0.4,  -3.5),
-            Vector3::new(-1.7,  3.0,  -7.5),
-            Vector3::new( 1.3, -2.0,  -2.5),
-            Vector3::new( 1.5,  2.0,  -2.5),
-            Vector3::new( 1.5,  0.2,  -1.5),
-            Vector3::new(-1.3,  1.0,  -1.5),
-        ];
-
         let texture1 = include_bytes!("../assets/a1.jpg");
         let texture2 = include_bytes!("../assets/a2.jpg");
         let texture3 = include_bytes!("../assets/a3.jpg");
+        let texture4 = include_bytes!("../assets/a4.jpg");
+        let texture5 = include_bytes!("../assets/a5.jpg");
 
         let textures: &[&[u8]] = &[
-            texture1, texture2, texture3
+            texture1, texture2, texture3,
+            texture4, texture5
         ];
 
-        let cubes = cube_positions.into_iter().enumerate().map(|(idx, pos)| {
-            let image_data =  textures[rand::random_range(0..3)];
-            Cube::new(*pos, &device, &queue, &model_bind_group_layout, &texture_bind_group_layout, image_data)
-        }).collect();
+        let cube_count: usize = 30;
+
+        let mut positions: Vec<Vector3<f32>> = Vec::new();
+        const MIN_DISTANCE: f32 = 3.0;
+
+        while positions.len() < cube_count {
+
+            let new_position = Vector3::new(
+                rand::random_range(-10.0..10.0),
+                rand::random_range(-5.0..5.0),
+                rand::random_range(-10.0..-3.0),
+            );
+
+            let too_close = positions.iter().any(| existing_pos | {
+                let distance = ( new_position - *existing_pos ).magnitude();
+                distance < MIN_DISTANCE
+            });
+
+            if !too_close {
+                positions.push(new_position);
+            }
+        }
+
+        let cubes = positions.iter().map(| position: &Vector3<f32>| {
+            let image_data =  textures[rand::random_range(0..textures.len())];
+            Cube::new(
+                *position, &device, &queue, &model_bind_group_layout, &texture_bind_group_layout, image_data
+            )
+        }).collect::<Vec<Cube>>();
 
         let mut state = State {
             window,
@@ -433,7 +445,7 @@ impl State {
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear( wgpu::Color { r: 0.2, g: 0.4, b: 0.1, a: 1.0 } ),
+                    load: wgpu::LoadOp::Clear( wgpu::Color::BLACK ),
                     store: wgpu::StoreOp::Store,
                 },
             })],

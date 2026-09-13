@@ -32,7 +32,7 @@ impl Cube {
 
         // texture
 
-        let texture = texture::Texture::from_bytes(&device, &queue, image_data_in_bytes).expect("texture creation error");
+        let texture: texture::Texture = texture::Texture::from_bytes(&device, &queue, image_data_in_bytes).expect("texture creation error");
 
         let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor { 
             label: Some("Texture Bind Group."), 
@@ -65,7 +65,7 @@ impl Cube {
             ).into(),
         };
 
-        let uniform_data = [uniform];
+        let uniform_data: [ModelUniform; 1] = [uniform];
 
         let buffer_init_desc: wgpu::util::BufferInitDescriptor = wgpu::util::BufferInitDescriptor {
             label: Some("Cube uniform Buffer"),
