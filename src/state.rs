@@ -307,7 +307,7 @@ impl State {
             texture4, texture5
         ];
 
-        let cube_count: usize = 30;
+        let cube_count: usize = 35;
 
         let mut positions: Vec<Vector3<f32>> = Vec::new();
         const MIN_DISTANCE: f32 = 3.0;
@@ -315,9 +315,9 @@ impl State {
         while positions.len() < cube_count {
 
             let new_position = Vector3::new(
+                rand::random_range(-15.0..15.0),
                 rand::random_range(-10.0..10.0),
-                rand::random_range(-5.0..5.0),
-                rand::random_range(-10.0..-3.0),
+                rand::random_range(-30.0..-3.0),
             );
 
             let too_close = positions.iter().any(| existing_pos | {
