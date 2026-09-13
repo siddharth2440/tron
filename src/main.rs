@@ -5,6 +5,7 @@ mod app;
 mod state;
 mod texture;
 mod coords;
+mod cube;
 
 fn main() {
     env_logger::init();

@@ -3,7 +3,7 @@ use cgmath::{Matrix4, Point3, Vector3};
 use wgpu::{util::DeviceExt, Surface};
 use winit::{event_loop::OwnedDisplayHandle, window::Window};
 
-use crate::{coords::CUBE_VERTICES, texture};
+use crate::{coords::CUBE_VERTICES, cube::Cube, texture};
 
 #[derive(Debug)]
 pub struct State {
@@ -28,18 +28,7 @@ pub struct State {
     win_height: u32,
     win_width: u32,
 
-    model_uniform_buffer: wgpu::Buffer,
-    
-    texture_bindgroup: wgpu::BindGroup,
-    model_matrix_bindgroup: wgpu::BindGroup,
-
-    rotation_x: f32,
-    rotation_y: f32,
-    rotation_z: f32,
-
-    rotation_speed_x: f32,
-    rotation_speed_y: f32,
-    rotation_speed_z: f32,
+    cubes: Vec<Cube>
 }
 
 #[repr(C)]
@@ -176,9 +165,6 @@ impl State {
 
         let physical_size = window.inner_size();
 
-        let image_data_in_bytes = include_bytes!("../assets/a2.jpg");
-        let texture = texture::Texture::from_bytes(&device, &queue, image_data_in_bytes).expect("texture creatiion error");
-
         let texture_bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { 
             label: Some("Texture Bind Group Layout"), 
             entries: &[
@@ -204,40 +190,6 @@ impl State {
             ]
         });
 
-        let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor { 
-            label: Some("Texture Bind Group."), 
-            layout: &texture_bind_group_layout, 
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&texture.texture_view)
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&texture.sampler)
-                }
-            ]
-        });
-
-        let model_matrix = Matrix4::from_translation(Vector3::new(0.3, 0.0, 0.0));
-        let view = Matrix4::look_at_rh(Point3::new(0.0, 0.0, 3.0), Point3::new(0.0, 0.0, 0.0), Vector3::unit_y());
-
-        let aspect = physical_size.width as f32 / physical_size.height as f32;
-
-        let projection = cgmath::perspective(cgmath::Deg(45.0), aspect, 0.1, 100.0);
-
-        let model_uniform = ModelUniform {
-            model_mat: model_matrix.into(),
-            projection_matrix: projection.into(),
-            view_matrix: view.into(),
-        };
-
-        let model_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
-            label: Some("model uniform buffer"),
-            contents: bytemuck::cast_slice(&[model_uniform]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST
-        });
-
         // Group 1
         // Binding 0 -> Model Matrix
 
@@ -255,17 +207,6 @@ impl State {
                     },
                 }
             ]
-        });
-
-        let model_bindgroup = device.create_bind_group(&wgpu::BindGroupDescriptor { 
-            label: Some("model bind group"), 
-            layout: &model_bind_group_layout, 
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: model_uniform_buffer.as_entire_binding()
-                }
-            ] 
         });
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -358,9 +299,31 @@ impl State {
         };
         let render_pipeline: wgpu::RenderPipeline = device.create_render_pipeline(&render_pipeline_desc);
 
-        let rotation_speed_x = rand::random_range(0.005..0.02);
-        let rotation_speed_y = rand::random_range(0.005..0.02);
-        let rotation_speed_z = rand::random_range(0.005..0.02);
+        let cube_positions: &[Vector3<f32>] = &[
+            Vector3::new( 0.0,  0.0,   0.0),
+            Vector3::new( 2.0,  5.0, -15.0),
+            Vector3::new(-1.5, -2.2,  -2.5),
+            Vector3::new(-3.8, -2.0, -12.3),
+            Vector3::new( 2.4, -0.4,  -3.5),
+            Vector3::new(-1.7,  3.0,  -7.5),
+            Vector3::new( 1.3, -2.0,  -2.5),
+            Vector3::new( 1.5,  2.0,  -2.5),
+            Vector3::new( 1.5,  0.2,  -1.5),
+            Vector3::new(-1.3,  1.0,  -1.5),
+        ];
+
+        let texture1 = include_bytes!("../assets/a1.jpg");
+        let texture2 = include_bytes!("../assets/a2.jpg");
+        let texture3 = include_bytes!("../assets/a3.jpg");
+
+        let textures: &[&[u8]] = &[
+            texture1, texture2, texture3
+        ];
+
+        let cubes = cube_positions.into_iter().enumerate().map(|(idx, pos)| {
+            let image_data =  textures[rand::random_range(0..3)];
+            Cube::new(*pos, &device, &queue, &model_bind_group_layout, &texture_bind_group_layout, image_data)
+        }).collect();
 
         let mut state = State {
             window,
@@ -373,22 +336,12 @@ impl State {
 
             vertex_buffer,
 
-            model_uniform_buffer,
-
             win_height: physical_size.height as u32,
             win_width: physical_size.width as u32,
             render_pipeline,
             config: surface_configuration,
-            texture_bindgroup: texture_bind_group,
-            model_matrix_bindgroup: model_bindgroup,
 
-            rotation_x: 0.0,
-            rotation_y: 0.0,
-            rotation_z: 0.0,
-
-            rotation_speed_x,
-            rotation_speed_y,
-            rotation_speed_z,
+            cubes
 
         };
 
@@ -416,35 +369,22 @@ impl State {
         self.depth_texture = texture::Texture::create_depth_buffer(&self.config, &self.device);
     }
 
-    fn update_uniforms(&mut self) {
+    fn get_view_projection(&self) -> (Matrix4<f32>, Matrix4<f32>) {
 
-        self.rotation_x += self.rotation_speed_x;
-        self.rotation_y += self.rotation_speed_y;
-        self.rotation_z += self.rotation_speed_z;
-
-        let rotation_x = Matrix4::from_angle_x(cgmath::Rad(self.rotation_x));
-        let rotation_y = Matrix4::from_angle_y(cgmath::Rad(self.rotation_y));
-        let rotation_z = Matrix4::from_angle_z(cgmath::Rad(self.rotation_z));
-
-        let model = rotation_x * rotation_y * rotation_z;
-        let view = Matrix4::look_at_rh(Point3::new(0.0, 0.0, 3.0), Point3::new(0.0, 0.0, 0.0), Vector3::unit_y());
+        let view = Matrix4::look_at_rh( 
+            Point3::new(0.0, 0.0, 3.0),
+            Point3::new(0.0, 0.0, 0.0),
+            Vector3::unit_y()
+        );
         
         let aspect = self.win_width as f32 / self.win_height as f32;
         let projection = cgmath::perspective(cgmath::Deg(45.0), aspect, 0.1, 100.0);
 
-        let uniforms: ModelUniform = ModelUniform { 
-                        model_mat: model.into(), 
-                        view_matrix: view.into(), 
-                        projection_matrix: projection.into()
-                    };
-
-        self.queue.write_buffer(&self.model_uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+        (view, projection)
 
     }
 
     pub fn render(&mut self) {
-        self.update_uniforms();
-
 
         self.window.request_redraw();
 
@@ -493,7 +433,7 @@ impl State {
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLUE),
+                    load: wgpu::LoadOp::Clear( wgpu::Color { r: 0.2, g: 0.4, b: 0.1, a: 1.0 } ),
                     store: wgpu::StoreOp::Store,
                 },
             })],
@@ -511,14 +451,22 @@ impl State {
         });
 
         renderpass.set_pipeline(&self.render_pipeline);
-        
-        renderpass.set_bind_group(0, &self.texture_bindgroup, &[]);
-        renderpass.set_bind_group(1, &self.model_matrix_bindgroup, &[]);
 
         renderpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
 
-        
-        renderpass.draw(0..36, 0..1);
+        let (view, projection) = self.get_view_projection();
+
+
+        for cube in self.cubes.iter_mut() {
+
+            cube.update();
+            cube.update_uniform(&self.queue, view, projection);
+            
+            renderpass.set_bind_group(0, &cube.texture_bindgroup, &[]);
+            renderpass.set_bind_group(1, &cube.bindgroup, &[]);
+            renderpass.draw(0..36, 0..1);
+
+        }
 
         drop(renderpass);
 
